@@ -1,0 +1,742 @@
+import 'package:flutter/material.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  MobileAds.instance.initialize();
+  runApp(StoryTimeApp());
+}
+
+class StoryTimeApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Magical Story Time',
+      theme: ThemeData(
+        primaryColor: Color(0xFF6A4CFF),
+        colorScheme: ColorScheme.light(
+          primary: Color(0xFF6A4CFF),
+          secondary: Color(0xFFFFD166),
+          background: Color(0xFFF8F5FF),
+        ),
+        fontFamily: 'Comfortaa',
+        textTheme: GoogleFonts.comfortaaTextTheme(
+          Theme.of(context).textTheme,
+        ).copyWith(
+          headline5: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF4A2DB5),
+          ),
+          bodyText1: TextStyle(
+            fontSize: 18,
+            height: 1.8,
+            color: Color(0xFF4A4A6A),
+          ),
+        ),
+      ),
+      home: StoryLibraryScreen(),
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}
+
+class Story {
+  final String id;
+  final String title;
+  final String imagePath;
+  final String audioPath;
+  final String content;
+  bool isFavorite;
+  bool isPremium;
+  final Color cardColor;
+
+  Story({
+    required this.id,
+    required this.title,
+    required this.imagePath,
+    required this.audioPath,
+    required this.content,
+    this.isFavorite = false,
+    this.isPremium = false,
+    required this.cardColor,
+  });
+
+  factory Story.fromJson(Map<String, dynamic> json) {
+    return Story(
+      id: json['id'],
+      title: json['title'],
+      imagePath: json['imagePath'],
+      audioPath: json['audioPath'],
+      content: json['content'],
+      isPremium: json['isPremium'] ?? false,
+      cardColor: Color(json['cardColor'] ?? 0xFF6A4CFF),
+    );
+  }
+}
+
+class StoryService {
+  Future<List<Story>> loadStories() async {
+    return [
+      Story(
+        id: "1",
+        title: "The Lion and the Mouse",
+        imagePath: "assets/images/lion_mouse.jpg",
+        audioPath: "assets/audio/lion_mouse.mp3",
+        content: "In a distant forest, there lived a strong lion and a small mouse. One day, the mouse fell into the lion's claws and pleaded, \"Please, O King of the Jungle, let me go and I will repay you one day.\" The lion laughed mockingly but let him go. Days later, the lion got caught in hunters' nets. Hearing his roar, the mouse rushed and gnawed the ropes to free him. The lion learned that even the small can be helpful, and kindness should be repaid with kindness.",
+        isPremium: false,
+        cardColor: Color(0xFFFFD166),
+      ),
+      // Additional stories here...
+    ];
+  }
+}
+
+class AdMobService {
+  static String get bannerAdUnitId => 'ca-app-pub-3940256099942544/6300978111';
+  static String get interstitialAdUnitId => "ca-app-pub-3940256099942544/1033173712";
+  static String get rewardedAdUnitId => "ca-app-pub-3940256099942544/5224354917";
+}
+
+class StoryLibraryScreen extends StatefulWidget {
+  @override
+  _StoryLibraryScreenState createState() => _StoryLibraryScreenState();
+}
+
+class _StoryLibraryScreenState extends State<StoryLibraryScreen> {
+  List<Story> stories = [];
+  List<Story> favoriteStories = [];
+  bool isLoading = true;
+  BannerAd? _bannerAd;
+  int storyReadCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _initApp();
+  }
+
+  Future<void> _initApp() async {
+    await loadStories();
+    _loadBannerAd();
+  }
+
+  Future<void> _loadPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    storyReadCount = prefs.getInt('storyReadCount') ?? 0;
+    final favorites = prefs.getStringList('favorites') ?? [];
+    
+    setState(() {
+      for (var story in stories) {
+        story.isFavorite = favorites.contains(story.id);
+      }
+      favoriteStories = stories.where((s) => s.isFavorite).toList();
+    });
+  }
+
+  Future<void> _savePreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setInt('storyReadCount', storyReadCount);
+    prefs.setStringList('favorites', 
+        stories.where((s) => s.isFavorite).map((s) => s.id).toList());
+  }
+
+  Future<void> loadStories() async {
+    final storyService = StoryService();
+    List<Story> loadedStories = await storyService.loadStories();
+    setState(() {
+      stories = loadedStories;
+      isLoading = false;
+    });
+    await _loadPreferences();
+  }
+
+  void _loadBannerAd() {
+    _bannerAd = BannerAd(
+      adUnitId: AdMobService.bannerAdUnitId,
+      request: AdRequest(),
+      size: AdSize.banner,
+      listener: BannerAdListener(
+        onAdLoaded: (Ad ad) => print('Banner ad loaded.'),
+        onAdFailedToLoad: (Ad ad, LoadAdError error) {
+          ad.dispose();
+          print('Banner ad failed to load: $error');
+        },
+      ),
+    )..load();
+  }
+
+  void _showInterstitialAd() {
+    InterstitialAd.load(
+      adUnitId: AdMobService.interstitialAdUnitId,
+      request: AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (InterstitialAd ad) => ad.show(),
+        onAdFailedToLoad: (LoadAdError error) {
+          print('InterstitialAd failed to load: $error');
+        },
+      ),
+    );
+  }
+
+  void _showRewardedAd(VoidCallback onReward) {
+    RewardedAd.load(
+      adUnitId: AdMobService.rewardedAdUnitId,
+      request: AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (RewardedAd ad) {
+          ad.show(onUserEarnedReward: (_, __) => onReward());
+        },
+        onAdFailedToLoad: (LoadAdError error) {
+          print('RewardedAd failed to load: $error');
+        },
+      ),
+    );
+  }
+
+  void _handleStoryRead() {
+    setState(() {
+      storyReadCount++;
+    });
+    _savePreferences();
+    
+    if (storyReadCount % 3 == 0) {
+      _showInterstitialAd();
+    }
+  }
+
+  void _toggleFavorite(Story story) {
+    setState(() {
+      story.isFavorite = !story.isFavorite;
+      if (story.isFavorite) {
+        favoriteStories.add(story);
+      } else {
+        favoriteStories.removeWhere((s) => s.id == story.id);
+      }
+    });
+    _savePreferences();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('Magical Story Time',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          flexibleSpace: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF6A4CFF), Color(0xFF8E6CFF)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+          ),
+          bottom: TabBar(
+            indicator: BoxDecoration(
+              borderRadius: BorderRadius.circular(25),
+              color: Colors.white.withOpacity(0.3),
+            ),
+            labelStyle: TextStyle(fontWeight: FontWeight.w600),
+            tabs: [
+              Tab(icon: Icon(Icons.auto_stories), text: 'Stories'),
+              Tab(icon: Icon(Icons.favorite), text: 'Favorites'),
+            ],
+          ),
+        ),
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFFF8F5FF),
+                Color(0xFFE6E1FF),
+              ],
+            ),
+          ),
+          child: TabBarView(
+            children: [
+              _buildStoryList(),
+              _buildFavoritesList(),
+            ],
+          ),
+        ),
+        bottomNavigationBar: _bannerAd != null
+            ? Container(
+                height: _bannerAd!.size.height.toDouble(),
+                width: _bannerAd!.size.width.toDouble(),
+                child: AdWidget(ad: _bannerAd!),
+              )
+            : SizedBox(),
+      ),
+    );
+  }
+
+  Widget _buildStoryList() {
+    if (isLoading) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: Color(0xFF6A4CFF)),
+            SizedBox(height: 20),
+            Text('Loading magical stories...',
+              style: TextStyle(fontSize: 18, color: Color(0xFF4A2DB5)),
+          ],
+        ),
+      );
+    }
+
+    return GridView.builder(
+      padding: EdgeInsets.all(16),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 0.75,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+      ),
+      itemCount: stories.length,
+      itemBuilder: (context, index) {
+        return _storyCard(stories[index]);
+      },
+    );
+  }
+
+  Widget _buildFavoritesList() {
+    if (favoriteStories.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.auto_awesome, size: 80, color: Color(0xFFFFD166)),
+            SizedBox(height: 20),
+            Text('Your favorite stories will appear here!',
+              style: TextStyle(fontSize: 18, color: Color(0xFF4A2DB5)),
+            SizedBox(height: 10),
+            Text('Tap the heart icon on any story',
+              style: TextStyle(color: Colors.grey[600])),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.all(16),
+      itemCount: favoriteStories.length,
+      itemBuilder: (context, index) {
+        return _favoriteStoryCard(favoriteStories[index]);
+      },
+    );
+  }
+
+  Widget _storyCard(Story story) {
+    return GestureDetector(
+      onTap: () => _handleStoryTap(story),
+      child: Container(
+        decoration: BoxDecoration(
+          color: story.cardColor.withOpacity(0.9),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black12,
+              blurRadius: 8,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Image.asset(
+                  story.imagePath,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    color: story.cardColor,
+                    child: Icon(Icons.image, size: 50, color: Colors.white),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 0,
+              left: 0,
+              right: 0,
+              child: Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(20),
+                    bottomRight: Radius.circular(20),
+                  ),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.7),
+                    ],
+                  ),
+                ),
+                child: Text(
+                  story.title,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                padding: EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  story.isFavorite ? Icons.favorite : Icons.favorite_border,
+                  color: story.isFavorite ? Color(0xFFFF6B6B) : Color(0xFF6A4CFF),
+                  size: 20,
+                ),
+              ),
+            ),
+            if (story.isPremium)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Color(0xFFFFD166),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.star, color: Colors.white, size: 14),
+                      SizedBox(width: 4),
+                      Text('Premium', 
+                          style: TextStyle(color: Colors.white, fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _favoriteStoryCard(Story story) {
+    return Container(
+      margin: EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 6,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(20),
+              bottomLeft: Radius.circular(20),
+            ),
+            child: Image.asset(
+              story.imagePath,
+              width: 100,
+              height: 100,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Container(
+                width: 100,
+                height: 100,
+                color: story.cardColor,
+                child: Icon(Icons.image, size: 30, color: Colors.white),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    story.title,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF4A2DB5),
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  if (story.isPremium)
+                    Row(
+                      children: [
+                        Icon(Icons.star, color: Color(0xFFFFD166), size: 16),
+                        SizedBox(width: 4),
+                        Text('Premium Story', 
+                            style: TextStyle(color: Color(0xFFFFD166), fontSize: 12)),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.play_circle_fill,
+                color: Color(0xFF6A4CFF), size: 32),
+            onPressed: () => _handleStoryTap(story),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleStoryTap(Story story) {
+    if (story.isPremium) {
+      _showRewardedAd(() {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => StoryDetailScreen(
+              story: story,
+              onRead: _handleStoryRead,
+              onFavorite: () => _toggleFavorite(story),
+            ),
+          ),
+        );
+      });
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => StoryDetailScreen(
+            story: story,
+            onRead: _handleStoryRead,
+            onFavorite: () => _toggleFavorite(story),
+          ),
+        ),
+      );
+    }
+  }
+}
+
+class StoryDetailScreen extends StatefulWidget {
+  final Story story;
+  final VoidCallback onRead;
+  final VoidCallback onFavorite;
+
+  StoryDetailScreen({
+    required this.story,
+    required this.onRead,
+    required this.onFavorite,
+  });
+
+  @override
+  _StoryDetailScreenState createState() => _StoryDetailScreenState();
+}
+
+class _StoryDetailScreenState extends State<StoryDetailScreen> {
+  late AudioPlayer audioPlayer;
+  bool isPlaying = false;
+  bool hasRead = false;
+  double _volume = 0.5;
+
+  @override
+  void initState() {
+    super.initState();
+    audioPlayer = AudioPlayer();
+    audioPlayer.onPlayerStateChanged.listen((state) {
+      setState(() => isPlaying = state == PlayerState.playing);
+    });
+    audioPlayer.setVolume(_volume);
+  }
+
+  @override
+  void dispose() {
+    audioPlayer.stop();
+    audioPlayer.dispose();
+    super.dispose();
+  }
+
+  void _toggleAudio() async {
+    if (isPlaying) {
+      await audioPlayer.pause();
+    } else {
+      await audioPlayer.play(AssetSource(widget.story.audioPath));
+      if (!hasRead) {
+        widget.onRead();
+        hasRead = true;
+      }
+    }
+  }
+
+  void _setVolume(double value) {
+    setState(() {
+      _volume = value;
+      audioPlayer.setVolume(_volume);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: CustomScrollView(
+        slivers: [
+          SliverAppBar(
+            expandedHeight: 250,
+            flexibleSpace: FlexibleSpaceBar(
+              background: Hero(
+                tag: 'image-${widget.story.id}',
+                child: Image.asset(
+                  widget.story.imagePath,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    color: widget.story.cardColor,
+                    child: Center(
+                      child: Icon(Icons.image, size: 80, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            actions: [
+              IconButton(
+                icon: Icon(
+                  widget.story.isFavorite 
+                      ? Icons.favorite 
+                      : Icons.favorite_border,
+                  color: Colors.white,
+                ),
+                onPressed: () {
+                  widget.onFavorite();
+                  setState(() {});
+                },
+              ),
+            ],
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.story.title,
+                    style: Theme.of(context).textTheme.headline5,
+                  ),
+                  SizedBox(height: 16),
+                  Container(
+                    padding: EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black12,
+                          blurRadius: 6,
+                          offset: Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      widget.story.content,
+                      style: Theme.of(context).textTheme.bodyText1,
+                      textAlign: TextAlign.justify,
+                    ),
+                  ),
+                  SizedBox(height: 30),
+                  _buildAudioControls(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAudioControls() {
+    return Column(
+      children: [
+        Text(
+          "Listen to the story",
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF4A2DB5),
+          ),
+        ),
+        SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              icon: Icon(Icons.skip_previous, color: Color(0xFF6A4CFF)),
+              onPressed: () {},
+            ),
+            Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [Color(0xFF6A4CFF), Color(0xFF8E6CFF)],
+                ),
+              ),
+              child: IconButton(
+                icon: Icon(
+                  isPlaying ? Icons.pause : Icons.play_arrow,
+                  color: Colors.white,
+                  size: 32,
+                ),
+                onPressed: _toggleAudio,
+              ),
+            ),
+            IconButton(
+              icon: Icon(Icons.skip_next, color: Color(0xFF6A4CFF)),
+              onPressed: () {},
+            ),
+          ],
+        ),
+        SizedBox(height: 16),
+        Row(
+          children: [
+            Icon(Icons.volume_down, color: Color(0xFF6A4CFF)),
+            Expanded(
+              child: Slider(
+                value: _volume,
+                onChanged: _setVolume,
+                activeColor: Color(0xFF6A4CFF),
+                inactiveColor: Colors.grey[300],
+              ),
+            ),
+            Icon(Icons.volume_up, color: Color(0xFF6A4CFF)),
+          ],
+        ),
+      ],
+    );
+  }
+}
